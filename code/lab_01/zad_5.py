@@ -40,7 +40,7 @@ class Time:
             print('Błędne dane. Ustawiono wartośc domyślną sekund: 0.')
             self.__dict__['seconds'] = 0
 
-    def set_time(self, hour = 0, minutes = 0, seconds = 0):
+    def set_time(self, hour=0, minutes=0, seconds=0):
         self.hour = hour
         self.minutes = minutes
         self.seconds = seconds
