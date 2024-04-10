@@ -16,8 +16,7 @@ class User:
 
 
 u = User('krystian', '12345678')
-print(u.password)
-print(u.check_password('12345678'))
+
 
 
 class PermissionError(Exception): pass
@@ -52,9 +51,10 @@ class Authenticator:
         try:
             self.users[username]
         except KeyError:
-            if len(password) > 7:
+            try:
+                password[7]
                 self.users[username] = User(username, password)
-            else:
+            except IndexError:
                 raise PasswordTooShort('Hasło jest za krótkie!')
         else:
             raise UsernameAlreadyExists('Taki użytkownik już istnieje!')
@@ -78,3 +78,46 @@ class Authenticator:
             return False
         else:
             return user.is_logged
+
+
+class Authorizer:
+    def __init__(self, authenticator):
+        self.permissions = {}
+        self.authenticator = authenticator
+
+    def add_permission(self, perm):
+        try:
+            self.permissions[perm]
+        except KeyError:
+            self.permissions[perm] = set()
+        else:
+            raise PermissionError('Takie uprawnienie już istnieje')
+
+    def permit_user(self, username, perm):
+        try:
+            self.authenticator.users[username]
+        except KeyError:
+            raise IncorrectUsername(f'{username} - nie ma takiego użytkownika')
+        else:
+            try:
+                set_users = self.permissions[perm]
+            except KeyError:
+                raise PermissionError('Takie uprawnienie nie istnieje')
+            else:
+                set_users.add(username)
+
+    def check_permission(self, username, perm):
+        if not self.authenticator.is_logged_in(username):
+            raise NotLoggedError(f'Użytkownik {username} nie jest zalogowany!')
+
+        try:
+            set_users = self.permissions[perm]
+        except KeyError:
+            raise PermissionError('Takie uprawnienie nie istnieje')
+        else:
+            if username not in set_users:
+                raise NotPermittedError(f'Użytkownik {username} nie ma takiego uprawnienia')
+
+
+authenticator = Authenticator()
+authorizer = Authorizer(authenticator)
