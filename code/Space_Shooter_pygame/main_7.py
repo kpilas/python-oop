@@ -1,0 +1,337 @@
+import pygame, os, random
+
+pygame.init()
+
+SIZESCREEN = WIDTH, HEIGHT = 1366, 740
+screen = pygame.display.set_mode(SIZESCREEN)
+clock = pygame.time.Clock()
+# wczytywanie grafik
+path = os.path.join(os.getcwd(), 'images')
+path_music = os.path.join(os.getcwd(), 'music')
+file_names = os.listdir(path)
+
+BACKGROUND = pygame.image.load(os.path.join(path, 'background.jpg')).convert()
+LIGHTBLUE = pygame.color.THECOLORS['lightblue']
+DARKGREEN = pygame.color.THECOLORS['darkgreen']
+DARKRED = pygame.color.THECOLORS['darkred']
+DARKBLUE = pygame.color.THECOLORS['darkblue']
+LIGHTGREEN = pygame.color.THECOLORS['lightgreen']
+YELLOW = pygame.color.THECOLORS['yellow']
+
+laser_sound = pygame.mixer.Sound(os.path.join(path_music, 'laser1.ogg'))
+lose_sound = pygame.mixer.Sound(os.path.join(path_music, 'lose.ogg'))
+bonus_sound = pygame.mixer.Sound(os.path.join(path_music, 'bonus.ogg'))
+zap_sound = pygame.mixer.Sound(os.path.join(path_music, 'zap.ogg'))
+file_names.remove('background.jpg')
+IMAGES = {}
+
+for file_name in file_names:
+    image_name = file_name[:-4].upper()
+    IMAGES[image_name] = pygame.image.load(os.path.join(path, file_name)).convert_alpha(BACKGROUND)
+
+
+# klasa gracza
+class Player(pygame.sprite.Sprite):
+    def __init__(self, image, cx, cy, fire_list):
+        super().__init__()
+        self.image = image
+        self.rect = self.image.get_rect()
+        self.rect.center = cx, cy
+        self.level = None
+        self.fire_list = fire_list
+        self.fire = self.fire_list[0]
+        self._count = 0
+        self.lives = 3
+        self.points = 0
+        self.speed_bonus = False
+
+    def draw(self, surface):
+        surface.blit(self.image, self.rect)
+        surface.blit(self.fire, [self.rect.centerx - self.fire.get_rect().width // 2, self.rect.centery + 40])
+
+    def update(self, key_pressed):
+        self.get_event(key_pressed)
+        self._move(self.fire_list, 3)
+
+        # blokujmy wyjście poza ekran gry
+        if self.rect.bottom > HEIGHT:
+            self.rect.bottom = HEIGHT
+        if self.rect.top < 0:
+            self.rect.top = 0
+        if self.rect.centerx < 0:
+            self.rect.centerx = 0
+        if self.rect.centerx > WIDTH:
+            self.rect.centerx = WIDTH
+
+        # kolizje z meteorem
+        if pygame.sprite.spritecollideany(self, self.level.set_of_meteors):
+            if self.speed_bonus:
+                self.speed_bonus = False
+            else:
+                self.lives -= 1
+            pygame.time.delay(200)
+            self.level.set_of_meteors.empty()
+
+        # kolizje z bonusami
+        for b in pygame.sprite.spritecollide(self, self.level.set_of_bonus, True):
+            if b.name == 'HEART':
+                self.lives += 1
+            elif b.name == 'SPEED':
+                self.speed_bonus = True
+
+    def shoot(self):
+        if len(self.level.set_of_bullets) < (10 + 6 * self.speed_bonus):
+            bl = Bullet(IMAGES['LASER2'], self.rect.centerx - 45, self.rect.centery, -(10 + 3 * self.speed_bonus))
+            br = Bullet(IMAGES['LASER2'], self.rect.centerx + 45, self.rect.centery, -(10 + 3 * self.speed_bonus))
+            if not pygame.sprite.groupcollide([bl, br], self.level.set_of_bullets, False, False):
+                self.level.set_of_bullets.add(bl, br)
+
+    def _move(self, image_list, speed_animation):
+        self.fire = image_list[self._count // speed_animation]
+        self._count = (self._count + 1) % (len(image_list) * speed_animation)
+
+    def get_event(self, key_pressed):
+        if key_pressed[pygame.K_LEFT]:
+            self.rect.move_ip([-(8 + 3 * self.speed_bonus), 0])
+        if key_pressed[pygame.K_RIGHT]:
+            self.rect.move_ip([8, 0])
+        if key_pressed[pygame.K_UP]:
+            self.rect.move_ip([0, -8])
+        if key_pressed[pygame.K_DOWN]:
+            self.rect.move_ip([0, 8])
+        if key_pressed[pygame.K_SPACE]:
+            self.shoot()
+
+
+# klasa pocisku
+class Bullet(pygame.sprite.Sprite):
+    def __init__(self, image, cx, cy, movement_y):
+        super().__init__()
+        self.image = image
+        self.rect = self.image.get_rect()
+        self.rect.center = cx, cy
+        self.movement_y = movement_y
+
+    def update(self):
+        self.rect.y += self.movement_y
+
+
+class Level:
+    def __init__(self, player):
+        self.player = player
+        self.set_of_bullets = pygame.sprite.Group()
+        self.set_of_bonus = pygame.sprite.Group()
+        self.text_of_points = Text(self.player.points, YELLOW, WIDTH - 80, 40, 78)
+
+    def update(self):
+        self.text_of_points.text = str(self.player.points)
+        self.set_of_bullets.update()
+        self.text_of_points.update()
+        self.set_of_bonus.update()
+        self._create_bonus()
+
+        # usuwanie pocisków znajdujących się poza ekranem
+        for b in self.set_of_bullets:
+            if b.rect.bottom < 0:
+                b.kill()
+
+    def draw(self, surface):
+        screen.blit(BACKGROUND, (-300, -300))
+        self.set_of_bullets.draw(surface)
+
+    def restart(self):
+        self.player.lives = 3
+        self.set_of_bullets.empty()
+        self.set_of_bonus.empty()
+        self.player.points = '0'
+
+    def _create_bonus(self):
+        if random.randint(1, 100) == 1:
+            name = random.choice(Bonus.name_list)
+            b = Bonus(IMAGES[name], [name.find('_') + 1], random.randint(3, 6))
+            b.name = name
+            b.rect.bottom = 0
+            b.rect.x = random.randint(0, WIDTH - b.rect.width)
+            if not pygame.sprite.spritecollideany(b, self.set_of_bonus):
+                self.set_of_bonus.add(b)
+
+
+class Level_1(Level):
+    def __init__(self, player):
+        super().__init__(player)
+        self.set_of_meteors = pygame.sprite.Group()
+
+    def update(self):
+        super().update()
+        self.set_of_meteors.update()
+        self._add_meteor()
+
+        # usuwanie meteorow znajdujących się poza ekranem
+        for m in self.set_of_meteors:
+            if m.rect.top > HEIGHT:
+                m.kill()
+            elif pygame.sprite.spritecollide(m, self.set_of_bullets, True):
+                if 'TINY' in m.name:
+                    self.player.points += 5
+                elif 'SMALL' in m.name:
+                    self.player.points += 5
+                elif 'MID' in m.name:
+                    self.player.points += 2
+                else:
+                    self.player.points += 1
+                m.kill()
+
+    def draw(self, surface):
+        super().draw(surface)
+        self.set_of_meteors.draw(surface)
+        self.set_of_bonus.draw(surface)
+        self.text_of_points.draw(surface)
+
+        # rysowanie żyć
+        for i in range(self.player.lives - 1):
+            surface.blit(IMAGES['PLAYERLIFE'], (20 + i * 45, 20))
+
+        self.text_of_points.draw(surface)
+        surface.blit(IMAGES['PLAYERLIFE'], (20 + i * 45, 20))
+
+    def _add_meteor(self):
+        if random.randint(1, 10) == 1:
+            name = random.choice(Meteor.name_list)
+            m = Meteor(IMAGES[name], 4)
+            m.name = name
+            m.rect.bottom = 0
+            m.rect.x = random.randint(0, WIDTH - m.rect.width)
+            if not pygame.sprite.spritecollideany(m, self.set_of_meteors):
+                self.set_of_meteors.add(m)
+
+    def restart(self):
+        super().restart()
+        self.set_of_meteors.empty()
+
+
+# klasa meteor
+class Meteor(pygame.sprite.Sprite):
+    name_list = [name for name in IMAGES if 'METEOR' in name]
+
+    def __init__(self, image, movement_y):
+        super().__init__()
+        self.image = image
+        self.rect = self.image.get_rect()
+        self.movement_y = movement_y
+        self.name = None
+
+    def update(self):
+        self.rect.y += self.movement_y
+
+
+class Text:
+    def __init__(self, text, text_color, cx, cy, font_size=36, font_type=None):
+        self.text = str(text)
+        self.text_color = text_color
+        self.font_size = font_size
+        self.font_type = font_type
+        self.font = pygame.font.SysFont(self.font_type, self.font_size)
+        self.cx = cx
+        self.cy = cy
+        self.update()
+
+    def update(self):
+        self.image = self.font.render(self.text, 1, self.text_color)
+        self.rect = self.image.get_rect()
+        self.rect.center = self.cx, self.cy
+
+    def draw(self, surface):
+        surface.blit(self.image, self.rect)
+
+
+class Button:
+    def __init__(self, text, text_color, background_color, cx, cy, width, height, font_size=36, font_family=None):
+        self.text = Text(text, text_color, cx, cy, font_size, font_family)
+        self.background_color = background_color
+        self.rect = pygame.Rect(0, 0, width, height)
+        self.rect.center = self.text.rect.center
+
+    def draw(self, surface):
+        surface.fill(self.background_color, self.rect)
+        self.text.update()
+        self.text.draw(surface)
+
+
+class Bonus(pygame.sprite.Sprite):
+    def __init__(self, image, name, movement_y):
+        name_list = [name for name in IMAGES if 'BONUS' in name]
+        super().__init__()
+        self.image = image
+        self.rect = self.image.get_rect()
+        self.movement_y = movement_y
+        self.name = name
+
+    def update(self):
+        self.rect.y += self.movement_y
+
+
+player = Player(IMAGES['PLAYER'], WIDTH // 2, 650, [IMAGES[name] for name in IMAGES if 'FIRE' in name])
+current_level = Level_1(player)
+player.level = current_level
+end_text = Text('KONIEC GRY', DARKRED, *screen.get_rect().center, font_size=128, font_type='Ink Free')
+start_button = Button('START', DARKBLUE, LIGHTBLUE, WIDTH // 2, HEIGHT // 2 - 100, 500, 150, font_size=74,
+                      font_family='Arial')
+quit_button = Button('QUIT', DARKBLUE, LIGHTBLUE, WIDTH // 2, HEIGHT // 2 + 100, 500, 150, font_size=74,
+                     font_family='Arial')
+
+window_open = True
+active_game = False
+while window_open:
+
+    # pętla zdarzeń
+    for event in pygame.event.get():
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                active_game = False
+                current_level.restart()
+        if event.type == pygame.QUIT:
+            window_open = False
+        if event.type == pygame.MOUSEBUTTONDOWN and not active_game:
+            if start_button.rect.collidepoint(pygame.mouse.get_pos()):
+                active_game = True
+                pygame.time.delay(200)
+            if quit_button.rect.collidepoint(pygame.mouse.get_pos()):
+                window_open = False
+
+    # rysowanie i aktualizacja obiektów
+    if active_game:
+        player.update(pygame.key.get_pressed())
+        current_level.update()
+        current_level.draw(screen)
+        player.draw(screen)
+        if player.lives <= 0:
+            window_open = False
+    else:
+        if start_button.rect.collidepoint(pygame.mouse.get_pos()):
+            start_button.text.text_color = LIGHTBLUE
+            start_button.background_color = DARKBLUE
+        else:
+            start_button.text.text_color = DARKBLUE
+            start_button.background_color = LIGHTBLUE
+
+        if quit_button.rect.collidepoint(pygame.mouse.get_pos()):
+            quit_button.text.text_color = LIGHTBLUE
+            quit_button.background_color = DARKBLUE
+        else:
+            quit_button.text.text_color = DARKBLUE
+            quit_button.background_color = LIGHTBLUE
+
+        screen.blit(BACKGROUND, (-300, -300))
+        start_button.draw(screen)
+        quit_button.draw(screen)
+
+    # aktualizacja okna
+    pygame.display.flip()
+    clock.tick(60)
+
+pygame.time.delay(500)
+screen.fill(LIGHTBLUE)
+end_text.draw(screen)
+pygame.display.update()
+pygame.time.delay(3000)
+pygame.quit()
